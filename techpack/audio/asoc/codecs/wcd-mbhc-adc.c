@@ -1100,7 +1100,11 @@ static irqreturn_t wcd_mbhc_adc_hs_rem_irq(int irq, void *data)
 
 		if (hphpa_on) {
 			hphpa_on = false;
+#if defined(CONFIG_ARCH_SDM845)
+			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_HPH_PA_EN, 1);
+#else
 			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_HPH_PA_EN, 3);
+#endif
 		}
 	}
 exit:
