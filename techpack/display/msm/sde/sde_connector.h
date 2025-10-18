@@ -485,6 +485,7 @@ struct sde_connector {
 	bool colorspace_updated;
 
 	bool last_cmd_tx_sts;
+	bool panel_dead_skip;
 	bool hdr_capable;
 };
 
