@@ -1258,7 +1258,6 @@ int dsi_display_set_power(struct drm_connector *connector,
 	struct drm_device *dev = NULL;
 	struct drm_notify_data g_notify_data;
 	int rc = 0;
-	int event = 0;
 	const char *sde_power_mode_str[] = {
 		[SDE_MODE_DPMS_ON] = "SDE_MODE_DPMS_ON",
 		[SDE_MODE_DPMS_LP1] = "SDE_MODE_DPMS_LP1",
@@ -1276,11 +1275,11 @@ int dsi_display_set_power(struct drm_connector *connector,
 		return -EINVAL;
 	} else {
 		dev = connector->dev;
-		event = dev->doze_state;
+		power_mode = dev->doze_state;
 	}
 
-	g_notify_data.data = &event;
-	DSI_INFO("%s %d\n", __func__, event);
+	g_notify_data.data = &power_mode;
+	g_notify_data.id = MSM_DRM_PRIMARY_DISPLAY;
 	DSI_INFO("power_mode = %s\n", sde_power_mode_str[power_mode]);
 	switch (power_mode) {
 	case SDE_MODE_DPMS_LP1:
@@ -5654,7 +5653,6 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 	display->panel_node = panel_node;
 	display->pdev = pdev;
 	display->boot_disp = boot_disp;
-	display->is_prim_display = true;
 	display->is_first_boot = true;
 
 	dsi_display_parse_cmdline_topology(display, index);
