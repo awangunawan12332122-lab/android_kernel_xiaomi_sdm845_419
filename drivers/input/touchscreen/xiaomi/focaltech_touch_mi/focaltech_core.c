@@ -1910,14 +1910,22 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
 	int *blank;
 	struct fts_ts_data *fts_data = container_of(self, struct fts_ts_data, fb_notif);
 
+	if (!evdata)
+		return 0;
+
 	if (evdata && evdata->data && event == DRM_EVENT_BLANK && fts_data && fts_data->client) {
 		blank = evdata->data;
+		FTS_INFO("FB event:%lu,blank:%d", event, *blank);
 		flush_workqueue(fts_data->event_wq);
 
-		if (*blank == DRM_BLANK_UNBLANK)
+		if (*blank == DRM_BLANK_UNBLANK) {
+			FTS_INFO("resume: event = %lu, not care\n", event);
 			queue_work(fts_data->event_wq, &fts_data->resume_work);
-		else if (*blank == DRM_BLANK_POWERDOWN)
+		} else if (*blank == DRM_BLANK_POWERDOWN) {
+			FTS_INFO("suspend: event = %lu, not care\n", event);
 			queue_work(fts_data->event_wq, &fts_data->suspend_work);
+		}
+		FTS_INFO("FB BLANK(%d) do not need process\n", *blank);
 	}
 
 	return 0;
