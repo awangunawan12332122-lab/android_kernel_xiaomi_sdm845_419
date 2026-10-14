@@ -17,7 +17,7 @@ on:
       nama_kernel:
         description: Atur Nama Kernel
         type: string
-        default: -〩Beler
+        default: "-〩Beler"
       kernel_url:
         description: Atur Kernel URL
         type: string
@@ -135,8 +135,9 @@ jobs:
             "Proton-GCC") export CROSS_COMPILE=aarch64-linux-gnu- ;;
             *) export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1 ;;
           esac
+          export KCFLAGS="$(find techpack drivers/clk -type d | sed 's|^|-I|' | tr '\n' ' ')"
           make -j$(nproc) ${{ inputs.defconfig }}
-          make -j$(nproc) Image.gz-dtb || { make -j$(nproc) Image.gz dtbs; cat arch/arm64/boot/Image.gz $(find arch/arm64/boot/dts -name '*.dtb' | grep -i beryllium | head -1) > arch/arm64/boot/Image.gz-dtb; }
+          make -j$(nproc) Image.gz-dtb || { make -j$(nproc) Image.gz dtbs; D=$(find arch/arm64/boot/dts -name '*.dtb' | grep -i beryllium | head -1); [ -z "$D" ] && D=$(find arch/arm64/boot/dts -name '*.dtb' | head -1); cat arch/arm64/boot/Image.gz $D > arch/arm64/boot/Image.gz-dtb; }
 
       - name: Cache AnyKernel3
         id: cache-ak
@@ -155,7 +156,7 @@ jobs:
           cd anykernel
           sed -i "s/kernel.string=.*/kernel.string=${FULL_NAME}/" anykernel.sh
           sed -i "s/device.name1=.*/device.name1=beryllium/" anykernel.sh
-          zip -r9 "${FULL_NAME}.zip" . -x "*.git/*"
+          zip -r9 "${FULL_NAME}.zip" . -x ".git/*"
           mv "${FULL_NAME}.zip" ..
 
       - name: Upload Hasil
