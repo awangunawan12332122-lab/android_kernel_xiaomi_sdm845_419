@@ -135,6 +135,14 @@ jobs:
             sed -i "s|#include [<\"]trace/define_trace.h[>\"]|#undef TRACE_INCLUDE_PATH\n#define TRACE_INCLUDE_PATH ../../$d\n#include <trace/define_trace.h>|" $f
           done
 
+      - name: Perbaiki Include Makefile
+        working-directory: kernel
+        run: |
+          INCDIRS=$(find techpack drivers/clk -type d | sed 's|^|-I|' | tr '\n' ' ')
+          for m in $(find techpack drivers/clk -name Makefile); do
+            echo "ccflags-y += $INCDIRS" >> $m
+          done
+
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -144,7 +152,6 @@ jobs:
             "Proton-GCC") export CROSS_COMPILE=aarch64-linux-gnu-; TC=gcc ;;
             *) export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1; TC=clang ;;
           esac
-          export KCFLAGS="-Itechpack/audio/asoc -Itechpack/audio/dsp"
           make -j$(nproc) ${{ inputs.defconfig }}
           if [ "${{ inputs.lto }}" = "Aktif" ]; then
             if [ "$TC" = "clang" ]; then
@@ -161,7 +168,32 @@ jobs:
             scripts/config -e LTO_NONE || true
             echo "LTO: nonaktif"
           fi
-          make -j$(nproc) Image.gz-dtb || { make -j$(nproc) Image.gz dtbs; D=$(find arch/arm64/boot/dts -name '*.dtb' | grep -i beryllium | head -1); [ -z "$D" ] && D=$(find arch/arm64/boot/dts -name '*.dtb' | head -1); cat arch/arm64/boot/Image.gz $D > arch/arm64/boot/Image.gz-dtb; }
+          RC=1
+          for i in 1 2 3 4 5 6; do
+            make -j$(nproc) Image.gz-dtb >../build.log 2>&1 && { RC=0; break; }
+            OBJ=$(grep -m1 -E "Makefile.build:[0-9]+: [^ ]+\.o\] Error" ../build.log | sed -E 's|.*Makefile.build:[0-9]+: ([^ ]+\.o)\] Error.*|\1|')
+            HDR=$(grep -m1 -E "fatal error:" ../build.log | sed -E "s|.*fatal error: ['\"]([^'\"]+)['\"] file not found.*|\1|;t;s|.*fatal error: ([^:]+): No such file.*|\1|")
+            [ -z "$OBJ" ] || [ -z "$HDR" ] && break
+            D=$(dirname "$OBJ")
+            [ -f "$D/Makefile" ] || break
+            F=$(find . -type f -name "$(basename "$HDR")" | head -1 | sed 's|^\./||')
+            [ -z "$F" ] && break
+            ID=$(dirname "$F")
+            grep -q "ccflags-y += -I$ID$" "$D/Makefile" && break
+            echo "ccflags-y += -I$ID" >> "$D/Makefile"
+            echo "percobaan $i: tambah -I$ID ke $D/Makefile untuk $(basename "$HDR")" | tee -a ../perbaikan.log
+          done
+          if [ $RC -ne 0 ]; then
+            echo "=== ERROR PERTAMA ==="
+            grep -m1 -B3 -A8 -E "fatal error:|error:" ../build.log
+            exit 1
+          fi
+          if [ ! -f arch/arm64/boot/Image.gz-dtb ]; then
+            make -j$(nproc) Image.gz dtbs
+            D=$(find arch/arm64/boot/dts -name '*.dtb' | grep -i beryllium | head -1)
+            [ -z "$D" ] && D=$(find arch/arm64/boot/dts -name '*.dtb' | head -1)
+            cat arch/arm64/boot/Image.gz $D > arch/arm64/boot/Image.gz-dtb
+          fi
 
       - name: Cache AnyKernel3
         id: cache-ak
@@ -188,3 +220,34 @@ jobs:
         with:
           name: ${{ env.FULL_NAME }}
           path: ${{ env.FULL_NAME }}.zip
+
+      - name: Laporan Error
+        if: always()
+        run: |
+          {
+            echo "## Laporan Build Kernel"
+            echo "Run: ${{ github.run_number }} | Toolchain: ${{ inputs.toolchain }} | LTO: ${{ inputs.lto }}"
+            if [ -f perbaikan.log ]; then
+              echo "### Perbaikan otomatis"
+              cat perbaikan.log
+            fi
+            if [ -f build.log ] && grep -qE "fatal error:|error:" build.log; then
+              echo "### Status: GAGAL"
+              echo "Error pertama:"
+              echo '```'
+              grep -m1 -B3 -A8 -E "fatal error:|error:" build.log
+              echo '```'
+            else
+              echo "### Status: SUKSES"
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-build
+          path: |
+            build.log
+            perbaikan.log
+          if-no-files-found: ignore
