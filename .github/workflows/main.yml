@@ -52,13 +52,13 @@ on:
       toolchain:
         description: Atur Toolchain
         type: choice
-        default: Bawaan 4.19 (Clang)
+        default: Bawaan 4.19 (Clang x86_64)
         options:
-          - Bawaan 4.19 (Clang)
+          - Bawaan 4.19 (Clang x86_64)
           - Proton-Clang
           - AOSP-Clang
-          - Bawaan 4.9 (GCC)
-          - Proton-GCC
+          - Bawaan GCC (cross apt)
+          - AOSP GCC 4.9
       device:
         description: Atur AnyKernel3
         type: choice
@@ -77,7 +77,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ inputs.linux == 'Ubuntu LTS' && 'ubuntu-latest' || inputs.linux == 'Ubuntu 24.04' && 'ubuntu-24.04' || 'ubuntu-22.04' }}
+    runs-on: ${{ inputs.linux == 'Ubuntu 24.04' && 'ubuntu-24.04' || 'ubuntu-22.04' }}
     container: ${{ inputs.linux == 'Debian 12' && 'debian:bookworm' || inputs.linux == 'Debian 11' && 'debian:bullseye' || inputs.linux == 'Arch Linux' && 'archlinux:latest' || '' }}
     env:
       ARCH: arm64
@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/toolchain
-          key: tc-${{ inputs.toolchain }}-t1
+          key: tc-${{ inputs.toolchain }}-t3
 
       - name: Unduh Toolchain
         run: |
@@ -106,8 +106,7 @@ jobs:
           case "${{ inputs.toolchain }}" in
             "Proton-Clang") [ -x ~/toolchain/proton-clang/bin/clang ] || { rm -rf ~/toolchain/proton-clang; git clone --depth=1 https://github.com/kdrag0n/proton-clang ~/toolchain/proton-clang; } ;;
             "AOSP-Clang") [ -x ~/toolchain/aosp-clang/bin/clang ] || { rm -rf ~/toolchain/aosp-clang; mkdir -p ~/toolchain/aosp-clang; curl -sL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r522817.tar.gz" | tar -xz -C ~/toolchain/aosp-clang; } ;;
-            "Bawaan 4.9 (GCC)") [ -x ~/toolchain/gcc-4.9/bin/aarch64-linux-android-gcc ] || { rm -rf ~/toolchain/gcc-4.9; git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ~/toolchain/gcc-4.9; } ;;
-            "Proton-GCC") [ -d ~/toolchain/proton-gcc/bin ] || { rm -rf ~/toolchain/proton-gcc; git clone --depth=1 https://github.com/kdrag0n/proton-gcc ~/toolchain/proton-gcc; } ;;
+            "AOSP GCC 4.9") [ -x ~/toolchain/gcc-4.9/bin/aarch64-linux-android-gcc ] || { rm -rf ~/toolchain/gcc-4.9; git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ~/toolchain/gcc-4.9; } ;;
           esac
 
       - name: Cache Kernel
@@ -160,41 +159,34 @@ jobs:
             sed -i "s|#include [<\"]trace/define_trace.h[>\"]|#undef TRACE_INCLUDE_PATH\n#define TRACE_INCLUDE_PATH ../../$d\n#include <trace/define_trace.h>|" $f
           done
 
-      - name: Perbaiki Include Makefile
-        working-directory: kernel
-        run: |
-          INCDIRS=$(find techpack drivers/clk -type d | sed 's|^|-I|' | tr '\n' ' ')
-          for m in $(find techpack drivers/clk -name Makefile); do
-            grep -qF "$INCDIRS" "$m" || echo "ccflags-y += $INCDIRS" >> "$m"
-          done
-
       - name: Build Kernel
         working-directory: kernel
         run: |
-          export PATH=~/toolchain/proton-clang/bin:~/toolchain/aosp-clang/bin:~/toolchain/gcc-4.9/bin:~/toolchain/proton-gcc/bin:$PATH
+          export PATH=~/toolchain/proton-clang/bin:~/toolchain/aosp-clang/bin:~/toolchain/gcc-4.9/bin:$PATH
           case "${{ inputs.toolchain }}" in
-            "Bawaan 4.9 (GCC)") export CROSS_COMPILE=aarch64-linux-android-; TC=gcc ;;
-            "Proton-GCC") export CROSS_COMPILE=aarch64-linux-gnu-; TC=gcc ;;
+            "Bawaan GCC (cross apt)") export CROSS_COMPILE=aarch64-linux-gnu-; TC=gcc ;;
+            "AOSP GCC 4.9")
+              if aarch64-linux-android-gcc --version >/dev/null 2>&1; then export CROSS_COMPILE=aarch64-linux-android-; TC=gcc
+              else echo "AOSP GCC 4.9 tidak bisa dijalankan, jatuh ke GCC cross apt"; export CROSS_COMPILE=aarch64-linux-gnu-; TC=gcc; fi ;;
             *) export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1; TC=clang ;;
           esac
           if [ "$TC" = "gcc" ] && ! ${CROSS_COMPILE}gcc --version >/dev/null 2>&1; then
-            echo "GCC prebuilt tidak bisa dijalankan di runner, jatuh ke clang bawaan"
-            export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1 TC=clang
+            echo "Compiler ${CROSS_COMPILE}gcc tidak tersedia"; exit 1
           fi
-          if [ "$TC" = "gcc" ] && ! command -v ${CROSS_COMPILE}gcc >/dev/null; then
-            echo "Compiler ${CROSS_COMPILE}gcc tidak ditemukan di PATH"
-            exit 1
+          if [ "$TC" = "clang" ] && ! clang --version >/dev/null 2>&1; then
+            echo "clang x86_64 tidak tersedia"; exit 1
           fi
-          export KCFLAGS="-Itechpack/audio/asoc -Itechpack/audio/dsp"
+          export KCFLAGS="$(find techpack drivers/clk -name '*.h' -printf '%h\n' 2>/dev/null | sort -u | sed 's|^|-idirafter |' | tr '\n' ' ')"
+          echo "Include fallback: $(echo $KCFLAGS | wc -w) path"
           make -j$(nproc) ${{ inputs.defconfig }}
           if [ "${{ inputs.lto }}" = "Aktif" ]; then
             if [ "$TC" = "clang" ]; then
               scripts/config -e LTO_CLANG || true
               scripts/config -e THINLTO || true
               scripts/config -d LTO_NONE || true
-              echo "LTO: aktif (clang thin-LTO)"
+              echo "LTO: aktif (clang thin-LTO x86_64)"
             else
-              echo "LTO: dilewati, toolchain GCC tidak mendukung LTO kernel"
+              echo "LTO: dilewati, toolchain GCC tidak mendukung LTO kernel 4.19"
             fi
           else
             scripts/config -d LTO_CLANG || true
@@ -202,27 +194,16 @@ jobs:
             scripts/config -e LTO_NONE || true
             echo "LTO: nonaktif"
           fi
-          RC=1
-          for i in 1 2 3 4 5 6; do
-            make -j$(nproc) Image.gz-dtb 2>&1 | tee ../build.log
-            RC=${PIPESTATUS[0]}
-            [ $RC -eq 0 ] && break
-            OBJ=$(grep -m1 -E "Makefile.build:[0-9]+: [^ ]+\.o\] Error" ../build.log | sed -E 's|.*Makefile.build:[0-9]+: ([^ ]+\.o)\] Error.*|\1|')
-            HDR=$(grep -m1 -E "fatal error:" ../build.log | sed -E "s|.*fatal error: ['\"]([^'\"]+)['\"] file not found.*|\1|;t;s|.*fatal error: ([^:]+): No such file.*|\1|")
-            [ -z "$OBJ" ] || [ -z "$HDR" ] && break
-            D=$(dirname "$OBJ")
-            while [ "$D" != "." ] && [ ! -f "$D/Makefile" ]; do D=$(dirname "$D"); done
-            [ -f "$D/Makefile" ] || break
-            F=$(find . -type f -name "$(basename "$HDR")" | head -1 | sed 's|^\./||')
-            [ -z "$F" ] && break
-            ID=$(dirname "$F")
-            grep -q "ccflags-y += -I$ID$" "$D/Makefile" && break
-            echo "ccflags-y += -I$ID" >> "$D/Makefile"
-            echo "percobaan $i: tambah -I$ID ke $D/Makefile untuk $(basename "$HDR")" | tee -a ../perbaikan.log
-          done
+          make -j$(nproc) Image.gz-dtb 2>&1 | tee ../build.log
+          RC=${PIPESTATUS[0]}
           if [ $RC -ne 0 ]; then
             echo "=== ERROR PERTAMA ==="
-            grep -m1 -B3 -A8 -E "fatal error:|error:" ../build.log
+            grep -m1 -B3 -A8 -E "fatal error:|error:|No rule to make target" ../build.log
+            if grep -q "file not found" ../build.log; then
+              echo "Kelas error: header tidak ketemu. Cek apakah folder header ada di techpack atau drivers/clk (sumber -idirafter)."
+            elif grep -q "No rule to make target" ../build.log; then
+              echo "Kelas error: Makefile vendor menolak flag. Jangan tambahkan -I ke Makefile; biarkan -idirafter global."
+            fi
             exit 1
           fi
           if [ ! -f arch/arm64/boot/Image.gz-dtb ]; then
@@ -253,68 +234,68 @@ jobs:
         if: inputs.device == 'POCO F1'
         run: |
           cat > anykernel/anykernel.sh <<'AK3EOF'
-          # AnyKernel3 Ramdisk Mod Script
-          # osm0sis @ xda-developers
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
 
-          ## AnyKernel setup
-          # begin properties
-          properties() { '
-          do.devicecheck=1
-          do.modules=0
-          do.systemless=1
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=beryllium
-          device.name2=Pocophone F1
-          device.name3=
-          device.name4=
-          device.name5=
-          supported.versions=
-          supported.patchlevels=
-          kernel.string=__KERNEL_STRING__
-          '; } # end properties
+## AnyKernel setup
+# begin properties
+properties() { '
+do.devicecheck=1
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=beryllium
+device.name2=Pocophone F1
+device.name3=
+device.name4=
+device.name5=
+supported.versions=
+supported.patchlevels=
+kernel.string=__KERNEL_STRING__
+'; } # end properties
 
-          # shell variables
-          block=/dev/block/bootdevice/by-name/boot;
-          is_slot_device=0;
-          ramdisk_compression=auto;
-          patch_vbmeta_flag=auto;
-
-
-          ## AnyKernel methods (DO NOT CHANGE)
-          # import patching functions/variables - see for reference
-          . tools/ak3-core.sh;
+# shell variables
+block=/dev/block/bootdevice/by-name/boot;
+is_slot_device=0;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
 
 
-          ## AnyKernel file attributes
-          # set permissions/ownership for included ramdisk files
-          set_perm_recursive 0 0 755 644 $ramdisk/*;
-          set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+## AnyKernel methods (DO NOT CHANGE)
+# import patching functions/variables - see for reference
+. tools/ak3-core.sh;
 
 
-          ## AnyKernel boot install
-          dump_boot;
-
-          write_boot;
-          ## end boot install
-
-
-          # shell variables
-          #block=vendor_boot;
-          #is_slot_device=1;
-          #ramdisk_compression=auto;
-          #patch_vbmeta_flag=auto;
-
-          # reset for vendor_boot patching
-          #reset_ak;
+## AnyKernel file attributes
+# set permissions/ownership for included ramdisk files
+set_perm_recursive 0 0 755 644 $ramdisk/*;
+set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
 
 
-          ## AnyKernel vendor_boot install
-          #split_boot; # skip unpack/repack ramdisk since we don't need vendor_ramdisk access
+## AnyKernel boot install
+dump_boot;
 
-          #flash_boot;
-          ## end vendor_boot install
-          AK3EOF
+write_boot;
+## end boot install
+
+
+# shell variables
+#block=vendor_boot;
+#is_slot_device=1;
+#ramdisk_compression=auto;
+#patch_vbmeta_flag=auto;
+
+# reset for vendor_boot patching
+#reset_ak;
+
+
+## AnyKernel vendor_boot install
+#split_boot; # skip unpack/repack ramdisk since we don't need vendor_ramdisk access
+
+#flash_boot;
+## end vendor_boot install
+AK3EOF
           sed -i "s|__KERNEL_STRING__|${FULL_NAME}|" anykernel/anykernel.sh
 
       - name: Pack ZIP
@@ -336,16 +317,14 @@ jobs:
           {
             echo "## Laporan Build Kernel"
             echo "Run: ${{ github.run_number }} | Toolchain: ${{ inputs.toolchain }} | LTO: ${{ inputs.lto }} | Device: ${{ inputs.device }}"
-            if [ -f perbaikan.log ]; then
-              echo "### Perbaikan otomatis"
-              cat perbaikan.log
-            fi
-            if [ -f build.log ] && grep -qE "fatal error:|error:" build.log; then
+            if [ -f build.log ] && grep -qE "fatal error:|error:|No rule to make target" build.log; then
               echo "### Status: GAGAL"
               echo "Error pertama:"
               echo '```'
-              grep -m1 -B3 -A8 -E "fatal error:|error:" build.log
+              grep -m1 -B3 -A8 -E "fatal error:|error:|No rule to make target" build.log
               echo '```'
+              if grep -q "file not found" build.log; then echo "Saran: pastikan folder header masuk cakupan find techpack drivers/clk."; fi
+              if grep -q "No rule to make target" build.log; then echo "Saran: jangan sentuh Makefile vendor; -idirafter global sudah cukup."; fi
             else
               echo "### Status: SUKSES"
             fi
@@ -356,7 +335,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: log-build
-          path: |
-            build.log
-            perbaikan.log
+          path: build.log
           if-no-files-found: ignore
