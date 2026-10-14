@@ -25,7 +25,7 @@ on:
       kernel_branch:
         description: Atur Branch Kernel
         type: string
-        default: "17.0"
+        default: "17"
       defconfig:
         description: Atur Defconfig
         type: string
@@ -43,12 +43,12 @@ on:
       toolchain:
         description: Atur Toolchain
         type: choice
-        default: Bawaan 4.19 (Clang)
+        default: Bawaan 4.9 (GCC)
         options:
+          - Bawaan 4.9 (GCC)
           - Bawaan 4.19 (Clang)
           - Proton-Clang
           - AOSP-Clang
-          - Bawaan 4.9 (GCC)
           - Proton-GCC
       anykernel_url:
         description: Atur AnyKernel3 URL
@@ -82,7 +82,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/toolchain
-          key: tc-${{ inputs.toolchain }}-v2
+          key: tc-${{ inputs.toolchain }}-v3
 
       - name: Unduh Toolchain
         run: |
@@ -94,16 +94,9 @@ jobs:
             "Proton-GCC") [ -d ~/toolchain/proton-gcc ] || git clone --depth=1 https://github.com/kdrag0n/proton-gcc ~/toolchain/proton-gcc ;;
           esac
 
-      - name: Cache Kernel
-        id: cache-k
-        uses: actions/cache@v4
-        with:
-          path: kernel
-          key: kernel-${{ inputs.kernel_url }}-${{ inputs.kernel_branch }}-v2
-
       - name: Unduh Kernel
-        if: steps.cache-k.outputs.cache-hit != 'true'
-        run: git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_url }} kernel
+        run: |
+          git clone -b "${{ inputs.kernel_branch }}" ${{ inputs.kernel_url }} kernel || { rm -rf kernel; git clone -b "${{ inputs.kernel_branch }}.0" ${{ inputs.kernel_url }} kernel; }
 
       - name: Info Versi
         working-directory: kernel
@@ -144,7 +137,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: anykernel
-          key: ak-${{ inputs.anykernel_url }}-${{ inputs.anykernel_branch }}-v2
+          key: ak-${{ inputs.anykernel_url }}-${{ inputs.anykernel_branch }}-v3
 
       - name: Unduh AnyKernel3
         if: steps.cache-ak.outputs.cache-hit != 'true'
