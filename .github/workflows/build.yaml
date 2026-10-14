@@ -40,16 +40,23 @@ on:
           - KernelSU-Next
           - SukiSU-Ultra
           - ReSukiSU
+      lto:
+        description: Atur LTO
+        type: choice
+        default: Aktif
+        options:
+          - Aktif
+          - Nonaktif
       toolchain:
         description: Atur Toolchain
         type: choice
         default: Bawaan 4.9 (GCC)
         options:
           - Bawaan 4.9 (GCC)
+          - Proton-GCC
           - Bawaan 4.19 (Clang)
           - Proton-Clang
           - AOSP-Clang
-          - Proton-GCC
       anykernel_url:
         description: Atur AnyKernel3 URL
         type: string
@@ -133,12 +140,27 @@ jobs:
         run: |
           export PATH=~/toolchain/proton-clang/bin:~/toolchain/aosp-clang/bin:~/toolchain/gcc-4.9/bin:~/toolchain/proton-gcc/bin:$PATH
           case "${{ inputs.toolchain }}" in
-            "Bawaan 4.9 (GCC)") export CROSS_COMPILE=aarch64-linux-android- ;;
-            "Proton-GCC") export CROSS_COMPILE=aarch64-linux-gnu- ;;
-            *) export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1 ;;
+            "Bawaan 4.9 (GCC)") export CROSS_COMPILE=aarch64-linux-android-; TC=gcc ;;
+            "Proton-GCC") export CROSS_COMPILE=aarch64-linux-gnu-; TC=gcc ;;
+            *) export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1; TC=clang ;;
           esac
-          export KCFLAGS="$(find techpack drivers/clk -type d | sed 's|^|-I|' | tr '\n' ' ')"
+          export KCFLAGS="-Itechpack/audio/asoc -Itechpack/audio/dsp"
           make -j$(nproc) ${{ inputs.defconfig }}
+          if [ "${{ inputs.lto }}" = "Aktif" ]; then
+            if [ "$TC" = "clang" ]; then
+              scripts/config -e LTO_CLANG || true
+              scripts/config -e THINLTO || true
+              scripts/config -d LTO_NONE || true
+              echo "LTO: aktif (clang thin-LTO)"
+            else
+              echo "LTO: dilewati, toolchain GCC tidak mendukung LTO kernel"
+            fi
+          else
+            scripts/config -d LTO_CLANG || true
+            scripts/config -d THINLTO || true
+            scripts/config -e LTO_NONE || true
+            echo "LTO: nonaktif"
+          fi
           make -j$(nproc) Image.gz-dtb || { make -j$(nproc) Image.gz dtbs; D=$(find arch/arm64/boot/dts -name '*.dtb' | grep -i beryllium | head -1); [ -z "$D" ] && D=$(find arch/arm64/boot/dts -name '*.dtb' | head -1); cat arch/arm64/boot/Image.gz $D > arch/arm64/boot/Image.gz-dtb; }
 
       - name: Cache AnyKernel3
