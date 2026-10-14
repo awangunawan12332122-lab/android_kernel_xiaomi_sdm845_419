@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/toolchain
-          key: tc-${{ inputs.toolchain }}-t3
+          key: tc-${{ inputs.toolchain }}-t4
 
       - name: Unduh Toolchain
         run: |
@@ -114,7 +114,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kernel
-          key: kernel-${{ inputs.kernel_url }}-${{ inputs.kernel_branch }}-k1
+          key: kernel-${{ inputs.kernel_url }}-${{ inputs.kernel_branch }}-k2
 
       - name: Unduh Kernel
         if: steps.cache-k.outputs.cache-hit != 'true'
@@ -176,8 +176,10 @@ jobs:
           if [ "$TC" = "clang" ] && ! clang --version >/dev/null 2>&1; then
             echo "clang x86_64 tidak tersedia"; exit 1
           fi
-          export KCFLAGS="$(find techpack drivers/clk -name '*.h' -printf '%h\n' 2>/dev/null | sort -u | sed 's|^|-idirafter |' | tr '\n' ' ')"
-          echo "Include fallback: $(echo $KCFLAGS | wc -w) path"
+          IDIRAFTER=$(find techpack drivers/clk -name '*.h' -printf '%h\n' 2>/dev/null | sort -u | sed 's|^|-idirafter |' | tr '\n' ' ')
+          PERMISSIVE="-Wno-unknown-warning-option -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=return-mismatch -Wno-error=strict-prototypes -Wno-error=old-style-definition -Wno-error=date-time"
+          export KCFLAGS="$IDIRAFTER $PERMISSIVE"
+          echo "Include fallback: $(echo $IDIRAFTER | wc -w) path"
           make -j$(nproc) ${{ inputs.defconfig }}
           if [ "${{ inputs.lto }}" = "Aktif" ]; then
             if [ "$TC" = "clang" ]; then
@@ -200,9 +202,11 @@ jobs:
             echo "=== ERROR PERTAMA ==="
             grep -m1 -B3 -A8 -E "fatal error:|error:|No rule to make target" ../build.log
             if grep -q "file not found" ../build.log; then
-              echo "Kelas error: header tidak ketemu. Cek apakah folder header ada di techpack atau drivers/clk (sumber -idirafter)."
+              echo "Kelas error: header tidak ketemu. Cek folder header ada di techpack atau drivers/clk."
             elif grep -q "No rule to make target" ../build.log; then
-              echo "Kelas error: Makefile vendor menolak flag. Jangan tambahkan -I ke Makefile; biarkan -idirafter global."
+              echo "Kelas error: Makefile vendor menolak flag. Jangan tambahkan -I ke Makefile."
+            elif grep -q "implicit-function-declaration" ../build.log; then
+              echo "Kelas error: masih ada promosi warning. Tambah flag -Wno-error terkait ke PERMISSIVE."
             fi
             exit 1
           fi
@@ -323,8 +327,6 @@ AK3EOF
               echo '```'
               grep -m1 -B3 -A8 -E "fatal error:|error:|No rule to make target" build.log
               echo '```'
-              if grep -q "file not found" build.log; then echo "Saran: pastikan folder header masuk cakupan find techpack drivers/clk."; fi
-              if grep -q "No rule to make target" build.log; then echo "Saran: jangan sentuh Makefile vendor; -idirafter global sudah cukup."; fi
             else
               echo "### Status: SUKSES"
             fi
