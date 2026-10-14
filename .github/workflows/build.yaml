@@ -161,6 +161,7 @@ jobs:
             echo "Compiler ${CROSS_COMPILE}gcc tidak ditemukan di PATH"
             exit 1
           fi
+          export KCFLAGS="-Itechpack/audio/asoc -Itechpack/audio/dsp"
           make -j$(nproc) ${{ inputs.defconfig }}
           if [ "${{ inputs.lto }}" = "Aktif" ]; then
             if [ "$TC" = "clang" ]; then
@@ -179,11 +180,14 @@ jobs:
           fi
           RC=1
           for i in 1 2 3 4 5 6; do
-            make -j$(nproc) Image.gz-dtb >../build.log 2>&1 && { RC=0; break; }
+            make -j$(nproc) Image.gz-dtb 2>&1 | tee ../build.log
+            RC=${PIPESTATUS[0]}
+            [ $RC -eq 0 ] && break
             OBJ=$(grep -m1 -E "Makefile.build:[0-9]+: [^ ]+\.o\] Error" ../build.log | sed -E 's|.*Makefile.build:[0-9]+: ([^ ]+\.o)\] Error.*|\1|')
             HDR=$(grep -m1 -E "fatal error:" ../build.log | sed -E "s|.*fatal error: ['\"]([^'\"]+)['\"] file not found.*|\1|;t;s|.*fatal error: ([^:]+): No such file.*|\1|")
             [ -z "$OBJ" ] || [ -z "$HDR" ] && break
             D=$(dirname "$OBJ")
+            while [ "$D" != "." ] && [ ! -f "$D/Makefile" ]; do D=$(dirname "$D"); done
             [ -f "$D/Makefile" ] || break
             F=$(find . -type f -name "$(basename "$HDR")" | head -1 | sed 's|^\./||')
             [ -z "$F" ] && break
@@ -215,12 +219,77 @@ jobs:
         if: steps.cache-ak.outputs.cache-hit != 'true'
         run: git clone --depth=1 -b ${{ inputs.anykernel_branch }} ${{ inputs.anykernel_url }} anykernel
 
+      - name: Tulis anykernel.sh
+        run: |
+          cat > anykernel/anykernel.sh <<'AK3EOF'
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
+
+## AnyKernel setup
+# begin properties
+properties() { '
+do.devicecheck=1
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=beryllium
+device.name2=Pocophone F1
+device.name3=
+device.name4=
+device.name5=
+supported.versions=
+supported.patchlevels=
+kernel.string=__KERNEL_STRING__
+'; } # end properties
+
+# shell variables
+block=/dev/block/bootdevice/by-name/boot;
+is_slot_device=0;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+
+
+## AnyKernel methods (DO NOT CHANGE)
+# import patching functions/variables - see for reference
+. tools/ak3-core.sh;
+
+
+## AnyKernel file attributes
+# set permissions/ownership for included ramdisk files
+set_perm_recursive 0 0 755 644 $ramdisk/*;
+set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+
+
+## AnyKernel boot install
+dump_boot;
+
+write_boot;
+## end boot install
+
+
+# shell variables
+#block=vendor_boot;
+#is_slot_device=1;
+#ramdisk_compression=auto;
+#patch_vbmeta_flag=auto;
+
+# reset for vendor_boot patching
+#reset_ak;
+
+
+## AnyKernel vendor_boot install
+#split_boot; # skip unpack/repack ramdisk since we don't need vendor_ramdisk access
+
+#flash_boot;
+## end vendor_boot install
+AK3EOF
+          sed -i "s|__KERNEL_STRING__|${FULL_NAME}|" anykernel/anykernel.sh
+
       - name: Pack ZIP
         run: |
           cp kernel/arch/arm64/boot/Image.gz-dtb anykernel/
           cd anykernel
-          sed -i "s/kernel.string=.*/kernel.string=${FULL_NAME}/" anykernel.sh
-          sed -i "s/device.name1=.*/device.name1=beryllium/" anykernel.sh
           zip -r9 "${FULL_NAME}.zip" . -x ".git/*"
           mv "${FULL_NAME}.zip" ..
 
