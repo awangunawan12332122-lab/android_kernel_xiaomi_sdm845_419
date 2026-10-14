@@ -1,0 +1,197 @@
+name: KERNEL BUILDER
+
+on:
+  workflow_dispatch:
+    inputs:
+      linux:
+        description: Atur Linux
+        type: choice
+        default: Ubuntu LTS
+        options:
+          - Ubuntu LTS
+          - Ubuntu 24.04
+          - Ubuntu 22.04
+          - Debian 12
+          - Debian 11
+          - Arch Linux
+      nama_kernel:
+        description: Atur Nama Kernel
+        type: string
+        default: -〩Beler
+      kernel_url:
+        description: Atur Kernel URL
+        type: string
+        default: https://github.com/awangunawan12332122-lab/android_kernel_xiaomi_sdm845_419
+      kernel_branch:
+        description: Atur Branch Kernel
+        type: string
+        default: "17.0"
+      defconfig:
+        description: Atur Defconfig
+        type: string
+        default: beryllium_defconfig
+      root_manager:
+        description: Atur Root Manager
+        type: choice
+        default: Tidak ada
+        options:
+          - Tidak ada
+          - KernelSU
+          - KernelSU-Next
+          - SukiSU-Ultra
+          - ReSukiSU
+      toolchain:
+        description: Atur Toolchain
+        type: choice
+        default: Bawaan 4.19 (Clang)
+        options:
+          - Bawaan 4.19 (Clang)
+          - Proton-Clang
+          - AOSP-Clang
+          - Bawaan 4.9 (GCC)
+          - Proton-GCC
+      anykernel_url:
+        description: Atur AnyKernel3 URL
+        type: string
+        default: https://github.com/osm0sis/AnyKernel3
+      anykernel_branch:
+        description: Atur Branch AnyKernel3
+        type: string
+        default: master
+
+jobs:
+  build:
+    runs-on: ${{ inputs.linux == 'Ubuntu LTS' && 'ubuntu-latest' || inputs.linux == 'Ubuntu 24.04' && 'ubuntu-24.04' || 'ubuntu-22.04' }}
+    container: ${{ (inputs.linux == 'Debian 12' && 'debian:bookworm') || (inputs.linux == 'Debian 11' && 'debian:bullseye') || (inputs.linux == 'Arch Linux' && 'archlinux:latest') || '' }}
+    env:
+      ARCH: arm64
+    steps:
+      - name: Persiapan Sistem
+        run: |
+          if command -v apt &> /dev/null; then
+            apt update && apt install -y git curl wget bc bison flex libssl-dev libelf-dev cpio rsync lz4 zstd python3 zip make gcc g++
+          elif command -v pacman &> /dev/null; then
+            pacman -Syu --noconfirm git curl wget bc bison flex openssl libelf cpio rsync lz4 zstd python zip make gcc
+          fi
+
+      - name: Cache Toolchain
+        id: cache-tc
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchain
+          key: tc-${{ inputs.toolchain }}-v2
+
+      - name: Unduh Toolchain
+        if: steps.cache-tc.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/toolchain
+          case "${{ inputs.toolchain }}" in
+            "Bawaan 4.19 (Clang)")
+              apt install -y clang lld llvm gcc-aarch64-linux-gnu || pacman -S --noconfirm clang lld llvm aarch64-linux-gnu-gcc
+              ;;
+            "Proton-Clang")
+              git clone --depth=1 https://github.com/kdrag0n/proton-clang ~/toolchain/proton-clang
+              ;;
+            "AOSP-Clang")
+              mkdir -p ~/toolchain/aosp-clang
+              curl -sL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r522817.tar.gz" | tar -xz -C ~/toolchain/aosp-clang
+              ;;
+            "Bawaan 4.9 (GCC)")
+              git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ~/toolchain/gcc-4.9
+              ;;
+            "Proton-GCC")
+              git clone --depth=1 https://github.com/kdrag0n/proton-gcc ~/toolchain/proton-gcc
+              ;;
+          esac
+
+      - name: Cache Kernel
+        id: cache-k
+        uses: actions/cache@v4
+        with:
+          path: kernel
+          key: kernel-${{ inputs.kernel_url }}-${{ inputs.kernel_branch }}-v2
+
+      - name: Unduh Kernel
+        if: steps.cache-k.outputs.cache-hit != 'true'
+        run: git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_url }} kernel
+
+      - name: Info Versi
+        working-directory: kernel
+        run: |
+          V=$(grep -E "^VERSION = " Makefile | awk '{print $3}')
+          P=$(grep -E "^PATCHLEVEL = " Makefile | awk '{print $3}')
+          S=$(grep -E "^SUBLEVEL = " Makefile | awk '{print $3}')
+          EXTRA=$(grep -E "^EXTRAVERSION = " Makefile | awk '{print $3}' | tr -d ' ')
+          echo "FULL_NAME=${V}.${P}.${S}${EXTRA}${{ inputs.nama_kernel }}" >> $GITHUB_ENV
+          echo "Nama Kernel: ${V}.${P}.${S}${EXTRA}${{ inputs.nama_kernel }}"
+
+      - name: Patch Root Manager
+        if: inputs.root_manager != 'Tidak ada'
+        working-directory: kernel
+        run: |
+          case "${{ inputs.root_manager }}" in
+            "KernelSU")
+              curl -sSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -s v0.9.5
+              ;;
+            "KernelSU-Next")
+              curl -sSL https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/refs/heads/next/kernel/setup.sh | bash -
+              ;;
+            "SukiSU-Ultra")
+              git clone --depth=1 -b main https://github.com/ShirkUKA/SukiSU-Ultra /tmp/suki
+              cp -r /tmp/suki/kernel drivers/kernelsu
+              echo "obj-y += kernelsu/" >> drivers/Makefile
+              ;;
+            "ReSukiSU")
+              git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU /tmp/resuki
+              cp -r /tmp/resuki/kernel drivers/resukisu
+              echo "obj-y += resukisu/" >> drivers/Makefile
+              ;;
+          esac
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          export PATH=~/toolchain/proton-clang/bin:~/toolchain/aosp-clang/bin:~/toolchain/gcc-4.9/bin:~/toolchain/proton-gcc/bin:$PATH
+          case "${{ inputs.toolchain }}" in
+            "Bawaan 4.19 (Clang)"|"Proton-Clang")
+              make CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) ${{ inputs.defconfig }}
+              make CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) Image.gz-dtb
+              ;;
+            "AOSP-Clang")
+              make CC=aosp-clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) ${{ inputs.defconfig }}
+              make CC=aosp-clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) Image.gz-dtb
+              ;;
+            "Bawaan 4.9 (GCC)")
+              make CROSS_COMPILE=aarch64-linux-android- -j$(nproc) ${{ inputs.defconfig }}
+              make CROSS_COMPILE=aarch64-linux-android- -j$(nproc) Image.gz-dtb
+              ;;
+            "Proton-GCC")
+              make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) ${{ inputs.defconfig }}
+              make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) Image.gz-dtb
+              ;;
+          esac
+
+      - name: Cache AnyKernel3
+        id: cache-ak
+        uses: actions/cache@v4
+        with:
+          path: anykernel
+          key: ak-${{ inputs.anykernel_url }}-${{ inputs.anykernel_branch }}-v2
+
+      - name: Unduh AnyKernel3
+        if: steps.cache-ak.outputs.cache-hit != 'true'
+        run: git clone --depth=1 -b ${{ inputs.anykernel_branch }} ${{ inputs.anykernel_url }} anykernel
+
+      - name: Pack ZIP
+        run: |
+          cp kernel/arch/arm64/boot/Image.gz-dtb anykernel/ 2>/dev/null || cp kernel/arch/arm64/boot/Image.gz anykernel/
+          cd anykernel
+          sed -i "s/kernel.string=.*/kernel.string=${FULL_NAME}/" anykernel.sh
+          sed -i "s/device.name1=.*/device.name1=beryllium/" anykernel.sh
+          zip -r9 "${FULL_NAME}.zip" * -x ".git/*" "README.md" "tools/*"
+
+      - name: Upload Hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FULL_NAME }}
+          path: anykernel/${{ env.FULL_NAME }}.zip
