@@ -119,6 +119,15 @@ jobs:
             "ReSukiSU") git clone --depth=1 https://github.com/DokiDokiReSuki/ReSukiSU /tmp/resuki; cp -r /tmp/resuki/kernel drivers/resukisu; echo "obj-y += resukisu/" >> drivers/Makefile; echo "source \"drivers/resukisu/Kconfig\"" >> drivers/Kconfig ;;
           esac
 
+      - name: Perbaiki Trace Header
+        working-directory: kernel
+        run: |
+          for f in $(grep -rl "trace/define_trace.h" --include="*.h" .); do
+            d=$(dirname $f | sed 's|^\./||')
+            sed -i '/#define[[:space:]]*TRACE_INCLUDE_PATH/d' $f
+            sed -i "s|#include [<\"]trace/define_trace.h[>\"]|#undef TRACE_INCLUDE_PATH\n#define TRACE_INCLUDE_PATH ../../$d\n#include <trace/define_trace.h>|" $f
+          done
+
       - name: Build Kernel
         working-directory: kernel
         run: |
