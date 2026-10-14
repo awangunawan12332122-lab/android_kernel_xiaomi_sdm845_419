@@ -62,16 +62,19 @@ on:
 jobs:
   build:
     runs-on: ${{ inputs.linux == 'Ubuntu LTS' && 'ubuntu-latest' || inputs.linux == 'Ubuntu 24.04' && 'ubuntu-24.04' || 'ubuntu-22.04' }}
-    container: ${{ (inputs.linux == 'Debian 12' && 'debian:bookworm') || (inputs.linux == 'Debian 11' && 'debian:bullseye') || (inputs.linux == 'Arch Linux' && 'archlinux:latest') || '' }}
+    container: ${{ inputs.linux == 'Debian 12' && 'debian:bookworm' || inputs.linux == 'Debian 11' && 'debian:bullseye' || inputs.linux == 'Arch Linux' && 'archlinux:latest' || '' }}
     env:
       ARCH: arm64
+      SUDO: ${{ contains(inputs.linux, 'Ubuntu') && 'sudo' || '' }}
     steps:
       - name: Persiapan Sistem
         run: |
+          export DEBIAN_FRONTEND=noninteractive
           if command -v apt &> /dev/null; then
-            apt update && apt install -y git curl wget bc bison flex libssl-dev libelf-dev cpio rsync lz4 zstd python3 zip make gcc g++
-          elif command -v pacman &> /dev/null; then
-            pacman -Syu --noconfirm git curl wget bc bison flex openssl libelf cpio rsync lz4 zstd python zip make gcc
+            $SUDO apt update -y
+            $SUDO apt install -y git curl wget bc bison flex libssl-dev libelf-dev cpio rsync lz4 zstd python3 zip make gcc g++ clang lld llvm gcc-aarch64-linux-gnu
+          else
+            pacman -Sy --noconfirm git curl wget bc bison flex openssl libelf cpio rsync lz4 zstd python zip make gcc clang lld llvm aarch64-linux-gnu-gcc
           fi
 
       - name: Cache Toolchain
@@ -82,26 +85,13 @@ jobs:
           key: tc-${{ inputs.toolchain }}-v2
 
       - name: Unduh Toolchain
-        if: steps.cache-tc.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/toolchain
           case "${{ inputs.toolchain }}" in
-            "Bawaan 4.19 (Clang)")
-              apt install -y clang lld llvm gcc-aarch64-linux-gnu || pacman -S --noconfirm clang lld llvm aarch64-linux-gnu-gcc
-              ;;
-            "Proton-Clang")
-              git clone --depth=1 https://github.com/kdrag0n/proton-clang ~/toolchain/proton-clang
-              ;;
-            "AOSP-Clang")
-              mkdir -p ~/toolchain/aosp-clang
-              curl -sL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r522817.tar.gz" | tar -xz -C ~/toolchain/aosp-clang
-              ;;
-            "Bawaan 4.9 (GCC)")
-              git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ~/toolchain/gcc-4.9
-              ;;
-            "Proton-GCC")
-              git clone --depth=1 https://github.com/kdrag0n/proton-gcc ~/toolchain/proton-gcc
-              ;;
+            "Proton-Clang") [ -d ~/toolchain/proton-clang ] || git clone --depth=1 https://github.com/kdrag0n/proton-clang ~/toolchain/proton-clang ;;
+            "AOSP-Clang") [ -d ~/toolchain/aosp-clang/bin ] || { mkdir -p ~/toolchain/aosp-clang; curl -sL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r522817.tar.gz" | tar -xz -C ~/toolchain/aosp-clang; } ;;
+            "Bawaan 4.9 (GCC)") [ -d ~/toolchain/gcc-4.9 ] || git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ~/toolchain/gcc-4.9 ;;
+            "Proton-GCC") [ -d ~/toolchain/proton-gcc ] || git clone --depth=1 https://github.com/kdrag0n/proton-gcc ~/toolchain/proton-gcc ;;
           esac
 
       - name: Cache Kernel
@@ -130,22 +120,10 @@ jobs:
         working-directory: kernel
         run: |
           case "${{ inputs.root_manager }}" in
-            "KernelSU")
-              curl -sSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -s v0.9.5
-              ;;
-            "KernelSU-Next")
-              curl -sSL https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/refs/heads/next/kernel/setup.sh | bash -
-              ;;
-            "SukiSU-Ultra")
-              git clone --depth=1 -b main https://github.com/ShirkUKA/SukiSU-Ultra /tmp/suki
-              cp -r /tmp/suki/kernel drivers/kernelsu
-              echo "obj-y += kernelsu/" >> drivers/Makefile
-              ;;
-            "ReSukiSU")
-              git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU /tmp/resuki
-              cp -r /tmp/resuki/kernel drivers/resukisu
-              echo "obj-y += resukisu/" >> drivers/Makefile
-              ;;
+            "KernelSU") curl -sSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -s v0.9.5 ;;
+            "KernelSU-Next") curl -sSL https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/refs/heads/next/kernel/setup.sh | bash - ;;
+            "SukiSU-Ultra") git clone --depth=1 -b main https://github.com/SukiSU-Ultra/SukiSU-Ultra /tmp/suki; cp -r /tmp/suki/kernel drivers/kernelsu; echo "obj-y += kernelsu/" >> drivers/Makefile; echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig ;;
+            "ReSukiSU") git clone --depth=1 https://github.com/DokiDokiReSuki/ReSukiSU /tmp/resuki; cp -r /tmp/resuki/kernel drivers/resukisu; echo "obj-y += resukisu/" >> drivers/Makefile; echo "source \"drivers/resukisu/Kconfig\"" >> drivers/Kconfig ;;
           esac
 
       - name: Build Kernel
@@ -153,23 +131,12 @@ jobs:
         run: |
           export PATH=~/toolchain/proton-clang/bin:~/toolchain/aosp-clang/bin:~/toolchain/gcc-4.9/bin:~/toolchain/proton-gcc/bin:$PATH
           case "${{ inputs.toolchain }}" in
-            "Bawaan 4.19 (Clang)"|"Proton-Clang")
-              make CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) ${{ inputs.defconfig }}
-              make CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) Image.gz-dtb
-              ;;
-            "AOSP-Clang")
-              make CC=aosp-clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) ${{ inputs.defconfig }}
-              make CC=aosp-clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 -j$(nproc) Image.gz-dtb
-              ;;
-            "Bawaan 4.9 (GCC)")
-              make CROSS_COMPILE=aarch64-linux-android- -j$(nproc) ${{ inputs.defconfig }}
-              make CROSS_COMPILE=aarch64-linux-android- -j$(nproc) Image.gz-dtb
-              ;;
-            "Proton-GCC")
-              make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) ${{ inputs.defconfig }}
-              make CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) Image.gz-dtb
-              ;;
+            "Bawaan 4.9 (GCC)") export CROSS_COMPILE=aarch64-linux-android- ;;
+            "Proton-GCC") export CROSS_COMPILE=aarch64-linux-gnu- ;;
+            *) export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1 ;;
           esac
+          make -j$(nproc) ${{ inputs.defconfig }}
+          make -j$(nproc) Image.gz-dtb || { make -j$(nproc) Image.gz dtbs; cat arch/arm64/boot/Image.gz $(find arch/arm64/boot/dts -name '*.dtb' | grep -i beryllium | head -1) > arch/arm64/boot/Image.gz-dtb; }
 
       - name: Cache AnyKernel3
         id: cache-ak
@@ -184,14 +151,15 @@ jobs:
 
       - name: Pack ZIP
         run: |
-          cp kernel/arch/arm64/boot/Image.gz-dtb anykernel/ 2>/dev/null || cp kernel/arch/arm64/boot/Image.gz anykernel/
+          cp kernel/arch/arm64/boot/Image.gz-dtb anykernel/
           cd anykernel
           sed -i "s/kernel.string=.*/kernel.string=${FULL_NAME}/" anykernel.sh
           sed -i "s/device.name1=.*/device.name1=beryllium/" anykernel.sh
-          zip -r9 "${FULL_NAME}.zip" * -x ".git/*" "README.md" "tools/*"
+          zip -r9 "${FULL_NAME}.zip" . -x "*.git/*"
+          mv "${FULL_NAME}.zip" ..
 
       - name: Upload Hasil
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.FULL_NAME }}
-          path: anykernel/${{ env.FULL_NAME }}.zip
+          path: ${{ env.FULL_NAME }}.zip
