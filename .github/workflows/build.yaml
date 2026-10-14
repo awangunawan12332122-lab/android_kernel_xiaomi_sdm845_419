@@ -89,17 +89,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/toolchain
-          key: tc-${{ inputs.toolchain }}-v3
+          key: tc-${{ inputs.toolchain }}-v4
 
       - name: Unduh Toolchain
         run: |
           mkdir -p ~/toolchain
           case "${{ inputs.toolchain }}" in
-            "Proton-Clang") [ -d ~/toolchain/proton-clang ] || git clone --depth=1 https://github.com/kdrag0n/proton-clang ~/toolchain/proton-clang ;;
-            "AOSP-Clang") [ -d ~/toolchain/aosp-clang/bin ] || { mkdir -p ~/toolchain/aosp-clang; curl -sL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r522817.tar.gz" | tar -xz -C ~/toolchain/aosp-clang; } ;;
-            "Bawaan 4.9 (GCC)") [ -d ~/toolchain/gcc-4.9 ] || git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ~/toolchain/gcc-4.9 ;;
-            "Proton-GCC") [ -d ~/toolchain/proton-gcc ] || git clone --depth=1 https://github.com/kdrag0n/proton-gcc ~/toolchain/proton-gcc ;;
+            "Proton-Clang") [ -x ~/toolchain/proton-clang/bin/clang ] || { rm -rf ~/toolchain/proton-clang; git clone --depth=1 https://github.com/kdrag0n/proton-clang ~/toolchain/proton-clang; } ;;
+            "AOSP-Clang") [ -x ~/toolchain/aosp-clang/bin/clang ] || { rm -rf ~/toolchain/aosp-clang; mkdir -p ~/toolchain/aosp-clang; curl -sL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r522817.tar.gz" | tar -xz -C ~/toolchain/aosp-clang; } ;;
+            "Bawaan 4.9 (GCC)") [ -x ~/toolchain/gcc-4.9/bin/aarch64-linux-android-gcc ] || { rm -rf ~/toolchain/gcc-4.9; git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 ~/toolchain/gcc-4.9; } ;;
+            "Proton-GCC") [ -d ~/toolchain/proton-gcc/bin ] || { rm -rf ~/toolchain/proton-gcc; git clone --depth=1 https://github.com/kdrag0n/proton-gcc ~/toolchain/proton-gcc; } ;;
           esac
+          ls ~/toolchain/*/bin 2>/dev/null | head -5 || true
 
       - name: Unduh Kernel
         run: |
@@ -152,6 +153,14 @@ jobs:
             "Proton-GCC") export CROSS_COMPILE=aarch64-linux-gnu-; TC=gcc ;;
             *) export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1; TC=clang ;;
           esac
+          if [ "$TC" = "gcc" ] && ! ${CROSS_COMPILE}gcc --version >/dev/null 2>&1; then
+            echo "GCC prebuilt tidak bisa dijalankan di runner, jatuh ke clang bawaan"
+            export CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu LLVM=1 LLVM_IAS=1 TC=clang
+          fi
+          if [ "$TC" = "gcc" ] && ! command -v ${CROSS_COMPILE}gcc >/dev/null; then
+            echo "Compiler ${CROSS_COMPILE}gcc tidak ditemukan di PATH"
+            exit 1
+          fi
           make -j$(nproc) ${{ inputs.defconfig }}
           if [ "${{ inputs.lto }}" = "Aktif" ]; then
             if [ "$TC" = "clang" ]; then
